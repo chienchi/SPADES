@@ -54,19 +54,36 @@ exist next to it:
   -p sample \
   -d /path/to/gottcha_db.species.fna \
   -t 4 \
-  --js-external \
   [--spades-data data/] \
   [--ont] \
   [--ont-error-rate 0.03] \
   [--clean]
 ```
 
+Re-profile an existing coordinate-sorted and indexed GOTTCHA2 BAM without
+mapping the reads again:
+
+```bash
+./run_SPADES.sh \
+  --bam sample.gottcha_species.bam \
+  -o reprofiled \
+  -p sample_reprofiled \
+  -d /path/to/gottcha_db.species.fna \
+  -t 4 \
+  --ont
+```
+
+The BAM index must be named `<bam>.bai`. Existing-BAM mode runs `gottcha2
+profile --bam`, regenerates the taxonomic/pathogen reports, and creates a
+coverage report without re-mapping reads or re-calling variants.
+
 For detailed instructions on using GOTTCHA2, please see its [wiki page](https://github.com/poeli/GOTTCHA2/wiki).
 
 Options:
-- `-i, --input` Input reads file (fastq/fq[.gz], etc.)
+- `-i, --input` Single-end FASTA/FASTQ reads file (optionally gzipped)
 - `-1, --read1` Paired-end read 1 (fastq/fq[.gz], etc.)
 - `-2, --read2` Paired-end read 2 (fastq/fq[.gz], etc.)
+- `-b, --bam` Existing coordinate-sorted GOTTCHA2 BAM; mutually exclusive with read input
 - `-o, --outdir` Output directory
 - `-p, --prefix` Output prefix (base filename)
 - `-d, --db-path` GOTTCHA2 fast-profile database base path
@@ -74,7 +91,6 @@ Options:
 - `--spades-data` Directory containing `taxonomy_db/` and `pathogen.tsv` (default: `data/`)
 - `--ont` Treat input as long reads; pre-processes with `fastplong`, splits to 150 bp, and passes relaxed error rate flags to GOTTCHA2
 - `--ont-error-rate` Error rate for ONT reads passed to GOTTCHA2 (`-er`), default: `0.03`
-- `--js-external` Use CDN-hosted JavaScript/CSS assets in generated HTML reports (required for local use)
 - `--clean` Remove intermediate files after the run (see Outputs section for details)
 - `--min-depth` Minimum depth for variant calling (default: 10)
 - `--version` Show script version and exit
@@ -136,11 +152,62 @@ This runs a small ONT example using files under `test/` and the bundled data in
 ## Notes
 
 - The script exports its own `scripts/` folder onto `PATH` and defaults `--spades-data` to `data/` next to the script.
-- Use `--js-external` when opening generated HTML reports directly from disk or from an environment that does not provide local `/publicdata` JavaScript/CSS assets.
 - `--ont` uses `fastplong`, splits reads to 150 bp, and passes the error rate to GOTTCHA2 (`--ont-error-rate`, default `0.03`). Suggesting values: `0.05` for legacy R9.4.1 (HAC/SUP), `0.01` for R10.4.1 (Simplex/SUP), and `0.001` for R10.4.1 (Duplex/SUP).
 - `--clean` removes the `intermediate/` directory after a successful run, keeping only final output files in the main output directory. Without `--clean`, all intermediate files are preserved in `intermediate/` for debugging.
 - `--min-depth` sets the minimum depth threshold for variant calling in the coverage browser (default: 10).
 - Ensure the database path points to the base file (e.g. `gottcha_db.species.fna`) and that the corresponding `.syldb`, `.zip`, `.stats`, and `.tax.tsv` exist.
+
+## Streaming Oxford Nanopore directories
+
+Run stream_spades.py to continuously monitor a directory for newly generated, stable FASTA/FASTQ files (`.fa`, `.fasta`, `.fna`, `.fq`, or `.fastq`, optionally gzip-compressed) and automatically process them using the SPAdes workflow.
+
+Open `<outdir>/<prefix>.stream.html` in your web browser to monitor the workflow in real time. The report is a self-contained dashboard that automatically refreshes as new data and analysis results become available.
+
+```bash
+./stream_spades.py \
+  --input-dir /data/ont/fastq_pass \
+  --outdir /results/run_01_stream \
+  --prefix run_01 \
+  --db-path /db/gottcha_db.species.fna \
+  --cpu 8
+```
+
+The monitor waits until a file's size and modification time have remained
+unchanged for `--settle-seconds` (30 seconds by default). Use `--recursive` to
+include subdirectories, `--once --settle-seconds 0` to process an existing
+batch and exit, or `--max-files N` to stop after a fixed number of files.
+When multiple stable files are present, they are processed strictly one at a
+time in modification-time/name order. The next file does not start until the
+current file's cumulative profile and state record are complete.
+
+Streaming output is organized as follows:
+
+```text
+<outdir>/
+  cumulative/<prefix>.gottcha_<level>.bam[.bai]
+  <prefix>.stream.html
+  stream_state.json
+  timepoints.tsv
+  timepoints/timepoint_000001/
+    chunk/       # SPADES result for the newly arrived file
+    profile/     # cumulative re-profile, including *.pathogen.full.tsv
+```
+
+`stream_state.json` makes restarts idempotent: an unchanged input file is not
+processed twice. If a file at the same path changes size or modification time,
+it is treated as a new timepoint. The cumulative BAM is replaced atomically
+after the merged BAM and final report both validate.
+
+`timepoints.tsv` records `raw_reads`, `filtered_reads`, their cumulative totals,
+and the source `qc_json` for every timepoint. `<prefix>.stream.html` is a
+self-contained, auto-refreshing status dashboard. It shows the current and
+overall monitor state, the latest cumulative screening finding, cumulative read
+totals, recent timepoints, and one tile per identified human-pathogenic species.
+Current findings are visually distinguished from historical-only findings.
+Clicking a species expands three line charts tracking supporting read
+alignments, signature coverage (`SIG_COV`), and SNI score over time. The report
+labels these as analytical screening evidence and keeps interpretation and
+confirmation limitations visible for clinical users.
 
 ## Notice of Copyright Assertion (O4958)
 
