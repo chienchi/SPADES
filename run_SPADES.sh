@@ -19,6 +19,7 @@ Usage:
     -t <cpu> \
     [--spades-data <spades_data_dir>] \
     [--min-depth <min_depth>] \
+    [--skip-qc] \
     [--ont] \
     [--ont-error-rate <float>] \
     [--clean]
@@ -40,6 +41,7 @@ Optional:
   --min-depth         Minimum depth for variant calling (default: 10)
   --ont               Treat reads/BAM as ONT data; read input is split to 150bp
   --ont-error-rate    Error rate for ONT reads (passed to gottcha2 -er), default: 0.03
+  --skip-qc           Skip fastp/fastplong quality control and preprocessing steps
   --js-external       Deprecated compatibility option; HTML resources are always embedded
   --clean             Remove large intermediates after the run
   --version           Show script version and exit
@@ -48,7 +50,7 @@ EOF
 }
 
 # variables needed (declare + default)
-VERSION="1.3.0"
+VERSION="1.3.1"
 INPUT=""
 BAM_INPUT=""
 BAM_MODE="false"
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --spades-data)     SPADES_DATA="${2:-}"; shift 2 ;;
     --ont)             ONT="true"; shift ;;
     --ont-error-rate)  ONT_ERROR_RATE="${2:-}"; shift 2 ;;
+    --skip-qc)         SKIP_QC="true"; shift ;;
     --js-external)     JS_EXTERNAL="true"; shift ;;
     --clean)           CLEAN_FLAG="true"; shift ;; 
     --min-depth)       MIN_DEPTH="${2:-}"; shift 2 ;;
@@ -305,6 +308,7 @@ run_gottcha2() {
               -mf 0.9 \
               -mg 0 \
               --mpa \
+              -ss 0.85,0.95,0.99 \
               --verbose \
               $ONT_FLAG
   elif [[ "$PAIRED" == "true" ]]; then
@@ -320,6 +324,7 @@ run_gottcha2() {
               -mg 0 \
               --fast-min-kmer 5 \
               --mpa \
+              -ss 0.85,0.95,0.99 \
               --verbose \
               $ONT_FLAG
   else
@@ -335,6 +340,7 @@ run_gottcha2() {
               -mg 0 \
               --fast-min-kmer 5 \
               --mpa \
+              -ss 0.85,0.95,0.99 \
               --verbose \
               $ONT_FLAG
   fi
@@ -612,7 +618,17 @@ run_pipeline() {
     if [[ "$ONT" == "true" ]]; then
       ONT_FLAG="-np -er $ONT_ERROR_RATE"
     fi
-  elif is_fasta_file "$INPUT"; then
+  elif [[ "$SKIP_QC" == "true" ]]; then
+    if [[ "$PAIRED" == "true" ]]; then
+      log_success "Skipping quality control step (--skip-qc flag set)."
+    else
+      READ="$INPUT"
+      log_success "Skipping quality control step (--skip-qc flag set)."
+    fi
+    if [[ "$ONT" == "true" ]]; then
+      ONT_FLAG="-np -er $ONT_ERROR_RATE"
+    fi
+  elif [[ "$PAIRED" != "true" ]] && is_fasta_file "$INPUT"; then
     SKIP_QC="true"
     READ="$INPUT"
     log_success "FASTA input detected; skipping FASTQ quality filtering."
@@ -629,8 +645,13 @@ run_pipeline() {
   if [[ "$BAM_MODE" == "true" ]]; then
     :
   elif [[ "$PAIRED" == "true" ]]; then
-    READ1="$INPUT_QC_R1"
-    READ2="$INPUT_QC_R2"
+    if [[ "$SKIP_QC" == "true" ]]; then
+      READ1="$READ1"
+      READ2="$READ2"
+    else
+      READ1="$INPUT_QC_R1"
+      READ2="$INPUT_QC_R2"
+    fi
   elif [[ "$SKIP_QC" == "true" ]]; then
     READ="$INPUT"
   else
